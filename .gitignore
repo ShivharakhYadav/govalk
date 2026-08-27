@@ -1,0 +1,4 @@
+bin/
+*.aof
+*.log
+.DS_Store
