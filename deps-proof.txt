@@ -1,4 +1,4 @@
-# Output of `go list -m all` — regenerated as of P5 (connection handler/timeouts).
+# Output of `go list -m all` — regenerated as of P6 (command model/dispatch).
 # Only the main module should ever appear here. Any additional line means
 # a dependency was introduced and the zero-dependency rule is broken.
 github.com/ShivharakhYadav/govalk
