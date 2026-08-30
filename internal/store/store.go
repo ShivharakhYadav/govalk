@@ -100,3 +100,68 @@ func (s *Store) Delete(key string) bool {
 	delete(sh.data, key)
 	return !e.expired(nowNano())
 }
+
+// SetTTL sets key's expiration deadline to the given UnixNano absolute
+// deadline, leaving its value and type unchanged. Reports whether key
+// was live beforehand; a nonexistent or already-expired key is left
+// untouched (there is nothing to set a TTL on), opportunistically
+// reaping the expired entry either way, and reported as false -
+// matching real Redis EXPIRE's "0 if key does not exist" return.
+func (s *Store) SetTTL(key string, deadline int64) bool {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.data[key]
+	if !ok {
+		return false
+	}
+	if e.expired(nowNano()) {
+		delete(sh.data, key)
+		return false
+	}
+	sh.data[key] = e.withTTL(deadline)
+	return true
+}
+
+// TTL reports key's remaining time-to-live. found is false if key does
+// not exist (or has already expired). hasTTL is false if key exists but
+// carries no expiration - remaining is meaningless in that case. When
+// both are true, remaining is the time left until expiry (never
+// negative; an entry can't be found as live and also already past its
+// deadline, since lookupLive reaps expired entries as it goes).
+func (s *Store) TTL(key string) (remaining time.Duration, hasTTL bool, found bool) {
+	now := nowNano()
+	e := s.shardFor(key).lookupLive(key, now)
+	if e == nil {
+		return 0, false, false
+	}
+	if e.expiresAt == 0 {
+		return 0, false, true
+	}
+	return time.Duration(e.expiresAt - now), true, true
+}
+
+// Persist removes key's TTL if it has one, leaving its value unchanged.
+// Reports whether a TTL was actually removed - false if key doesn't
+// exist or exists but already had no TTL, matching real Redis PERSIST's
+// return convention.
+func (s *Store) Persist(key string) bool {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.data[key]
+	if !ok {
+		return false
+	}
+	if e.expired(nowNano()) {
+		delete(sh.data, key)
+		return false
+	}
+	if e.expiresAt == 0 {
+		return false
+	}
+	sh.data[key] = e.withTTL(0)
+	return true
+}

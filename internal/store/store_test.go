@@ -177,3 +177,89 @@ func TestStore_ConcurrentAccess(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestStore_SetTTL_ExistingKey(t *testing.T) {
+	s := New()
+	s.Set("k", []byte("v"), 0)
+
+	if !s.SetTTL("k", time.Now().Add(time.Hour).UnixNano()) {
+		t.Fatalf("SetTTL on existing key = false, want true")
+	}
+
+	got, ok, err := s.Get("k")
+	if err != nil || !ok || string(got) != "v" {
+		t.Fatalf("Get after SetTTL = (%q, %v, %v), want (\"v\", true, nil): value must survive", got, ok, err)
+	}
+	if _, hasTTL, found := s.TTL("k"); !found || !hasTTL {
+		t.Fatalf("TTL after SetTTL: found=%v hasTTL=%v, want both true", found, hasTTL)
+	}
+}
+
+func TestStore_SetTTL_MissingKey(t *testing.T) {
+	s := New()
+	if s.SetTTL("nope", time.Now().Add(time.Hour).UnixNano()) {
+		t.Fatalf("SetTTL on missing key = true, want false")
+	}
+}
+
+func TestStore_SetTTL_ExpiredKeyReturnsFalseAndReaps(t *testing.T) {
+	s := New()
+	past := time.Now().Add(-time.Hour).UnixNano()
+	s.Set("k", []byte("v"), past)
+
+	if s.SetTTL("k", time.Now().Add(time.Hour).UnixNano()) {
+		t.Fatalf("SetTTL on an already-expired key = true, want false (nothing to set a TTL on)")
+	}
+	if s.Exists("k") {
+		t.Fatalf("key must not exist after SetTTL was attempted on an expired key")
+	}
+}
+
+func TestStore_TTL_States(t *testing.T) {
+	s := New()
+
+	if _, _, found := s.TTL("nope"); found {
+		t.Fatalf("TTL on missing key: found = true, want false")
+	}
+
+	s.Set("no-ttl", []byte("v"), 0)
+	if _, hasTTL, found := s.TTL("no-ttl"); !found || hasTTL {
+		t.Fatalf("TTL on a key with no expiry: found=%v hasTTL=%v, want found=true hasTTL=false", found, hasTTL)
+	}
+
+	future := time.Now().Add(time.Hour).UnixNano()
+	s.Set("with-ttl", []byte("v"), future)
+	remaining, hasTTL, found := s.TTL("with-ttl")
+	if !found || !hasTTL {
+		t.Fatalf("TTL on a key with a future expiry: found=%v hasTTL=%v, want both true", found, hasTTL)
+	}
+	if remaining <= 0 || remaining > time.Hour {
+		t.Fatalf("remaining = %v, want a positive duration close to 1h", remaining)
+	}
+}
+
+func TestStore_Persist(t *testing.T) {
+	s := New()
+
+	if s.Persist("nope") {
+		t.Fatalf("Persist on missing key = true, want false")
+	}
+
+	s.Set("no-ttl", []byte("v"), 0)
+	if s.Persist("no-ttl") {
+		t.Fatalf("Persist on a key with no TTL = true, want false")
+	}
+
+	future := time.Now().Add(time.Hour).UnixNano()
+	s.Set("with-ttl", []byte("v"), future)
+	if !s.Persist("with-ttl") {
+		t.Fatalf("Persist on a key with a TTL = false, want true")
+	}
+	if _, hasTTL, found := s.TTL("with-ttl"); !found || hasTTL {
+		t.Fatalf("TTL after Persist: found=%v hasTTL=%v, want found=true hasTTL=false", found, hasTTL)
+	}
+	got, ok, _ := s.Get("with-ttl")
+	if !ok || string(got) != "v" {
+		t.Fatalf("value must survive Persist: got (%q, %v)", got, ok)
+	}
+}

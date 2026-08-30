@@ -17,7 +17,9 @@ import (
 
 func newTestDispatcher() *Dispatcher {
 	d := NewDispatcher()
-	RegisterStringCommands(d, store.New())
+	s := store.New()
+	RegisterStringCommands(d, s)
+	RegisterTTLCommands(d, s)
 	return d
 }
 
