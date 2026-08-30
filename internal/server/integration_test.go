@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ShivharakhYadav/govalk/internal/resp"
+	"github.com/ShivharakhYadav/govalk/internal/store"
 )
 
 // TestPingEcho_EndToEnd is the P7 checkpoint: a real TCP listener, the
@@ -131,5 +132,79 @@ func TestPingEcho_InlineCommand(t *testing.T) {
 	}
 	if got, want := string(buf[:n]), "+PONG\r\n"; got != want {
 		t.Fatalf("reply = %q, want %q", got, want)
+	}
+}
+
+// TestStringCommands_EndToEnd is the P9 checkpoint: GET/SET/DEL/EXISTS
+// driven over a real socket against a real Store, the same full stack
+// (listener -> Accept loop -> connection handler -> dispatcher) as
+// TestPingEcho_EndToEnd.
+func TestStringCommands_EndToEnd(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	defer ln.Close()
+
+	d := NewDispatcher()
+	RegisterAdminCommands(d)
+	RegisterStringCommands(d, store.New())
+	handler := NewConnHandler(d.Dispatch, ConnConfig{IdleTimeout: 5 * time.Second})
+	srv := New(ln, handler, Config{MaxConnections: 8, Logger: testLogger()})
+	go srv.Serve()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("net.Dial: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("SetDeadline: %v", err)
+	}
+
+	r := resp.NewReader(conn)
+	w := resp.NewWriter(conn)
+
+	send := func(t *testing.T, args ...string) resp.Value {
+		t.Helper()
+		elems := make([]resp.Value, len(args))
+		for i, a := range args {
+			elems[i] = resp.NewBulkString([]byte(a))
+		}
+		if err := w.WriteValue(resp.NewArray(elems)); err != nil {
+			t.Fatalf("write %v: %v", args, err)
+		}
+		if err := w.Flush(); err != nil {
+			t.Fatalf("flush %v: %v", args, err)
+		}
+		reply, err := r.ReadValue()
+		if err != nil {
+			t.Fatalf("read reply to %v: %v", args, err)
+		}
+		return reply
+	}
+
+	if reply := send(t, "GET", "foo"); reply.Kind != resp.BulkString || !reply.Null {
+		t.Fatalf("GET on missing key = %+v, want Null Bulk String", reply)
+	}
+
+	if reply := send(t, "SET", "foo", "bar"); reply.Kind != resp.SimpleString || reply.Str != "OK" {
+		t.Fatalf("SET reply = %+v, want +OK", reply)
+	}
+
+	if reply := send(t, "GET", "foo"); reply.Kind != resp.BulkString || string(reply.Bulk) != "bar" {
+		t.Fatalf("GET reply = %+v, want bulk \"bar\"", reply)
+	}
+
+	if reply := send(t, "EXISTS", "foo", "missing"); reply.Kind != resp.Integer || reply.Int != 1 {
+		t.Fatalf("EXISTS reply = %+v, want :1", reply)
+	}
+
+	if reply := send(t, "DEL", "foo"); reply.Kind != resp.Integer || reply.Int != 1 {
+		t.Fatalf("DEL reply = %+v, want :1", reply)
+	}
+
+	if reply := send(t, "GET", "foo"); !reply.Null {
+		t.Fatalf("GET after DEL = %+v, want Null Bulk String", reply)
 	}
 }

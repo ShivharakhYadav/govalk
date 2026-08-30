@@ -1,4 +1,4 @@
-# Output of `go list -m all` — regenerated as of P8 (sharded store core).
+# Output of `go list -m all` — regenerated as of P9 (GET/SET/DEL/EXISTS wired to store).
 # Only the main module should ever appear here. Any additional line means
 # a dependency was introduced and the zero-dependency rule is broken.
 github.com/ShivharakhYadav/govalk
